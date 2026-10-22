@@ -1,4 +1,4 @@
-// Package reddit is the native plugin for reddit subreddits and user profiles.
+// Package reddit is the plugin for reddit subreddits and user profiles.
 //
 // Reddit's .rss feeds are public and are handled by the generic feed parser, so
 // this plugin does not own the fetch. It owns every reddit-specific behavior
