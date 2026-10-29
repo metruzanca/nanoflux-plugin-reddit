@@ -80,6 +80,11 @@ func (*Plugin) Meta() pluginapi.Meta {
 		APIVersion: pluginapi.APIVersion,
 		UserAgent:  oembed.BrowserUserAgent,
 		Summary:    "reddit: resolves post media, and labels items with their subreddit and author for filtering",
+		// Reddit's anonymous .rss endpoints are tightly rate-limited and serve
+		// the same host for every subreddit, so a short poll interval spends the
+		// host's budget on one feed. The host uses the larger of this and its
+		// configured minimum.
+		MinPollInterval: time.Hour,
 	}
 }
 
@@ -98,7 +103,7 @@ func (*Plugin) Match(u *url.URL, cap pluginapi.Capability) bool {
 	switch cap {
 	case pluginapi.CapBypassProxy:
 		return isRedditMediaHost(u.Hostname())
-	case pluginapi.CapRender, pluginapi.CapDocs, pluginapi.CapSharedKey, pluginapi.CapURLPolicy, pluginapi.CapDiscover, pluginapi.CapDecorate:
+	case pluginapi.CapRender, pluginapi.CapDocs, pluginapi.CapSharedKey, pluginapi.CapURLPolicy, pluginapi.CapDiscover, pluginapi.CapDecorate, pluginapi.CapMinPollInterval:
 		if !isRedditHost(u.Hostname()) {
 			return false
 		}
@@ -108,7 +113,7 @@ func (*Plugin) Match(u *url.URL, cap pluginapi.Capability) bool {
 		// that owns search; the item-link capabilities (render, decorate) and the
 		// per-post shared key still apply, so search results cross-dedupe with
 		// subscribed feeds and render their normal attribution.
-		if isSearchURL(u) && (cap == pluginapi.CapDiscover || cap == pluginapi.CapURLPolicy || cap == pluginapi.CapDocs) {
+		if isSearchURL(u) && (cap == pluginapi.CapDiscover || cap == pluginapi.CapURLPolicy || cap == pluginapi.CapDocs || cap == pluginapi.CapMinPollInterval) {
 			return false
 		}
 		return true

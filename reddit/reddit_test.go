@@ -121,12 +121,26 @@ func TestMatch(t *testing.T) {
 		if !p.Match(parsed, pluginapi.CapDiscover) {
 			t.Errorf("Match(%q, CapDiscover) = false", u)
 		}
+		if !p.Match(parsed, pluginapi.CapMinPollInterval) {
+			t.Errorf("Match(%q, CapMinPollInterval) = false", u)
+		}
 		if p.Match(parsed, pluginapi.CapFetch) {
 			t.Errorf("reddit should not claim fetch for %q", u)
 		}
 	}
 	if p.Match(mustURL(t, "https://example.com/r/x/comments/1a/"), pluginapi.CapRender) {
 		t.Error("non-reddit host should not match")
+	}
+	if p.Match(mustURL(t, "https://example.com/r/x/comments/1a/"), pluginapi.CapMinPollInterval) {
+		t.Error("non-reddit host should not claim a poll floor")
+	}
+}
+
+// The plugin declares a one-hour floor so lowering the host's global minimum
+// cannot poll reddit's rate-limited feeds more often than the site tolerates.
+func TestMetaDeclaresPollFloor(t *testing.T) {
+	if got := (&Plugin{}).Meta().MinPollInterval; got != time.Hour {
+		t.Fatalf("MinPollInterval = %v, want 1h", got)
 	}
 }
 
@@ -441,6 +455,9 @@ func TestSearchURLNotOwned(t *testing.T) {
 	}
 	if p.Match(search, pluginapi.CapDocs) {
 		t.Error("Match(search, CapDocs) should be false")
+	}
+	if p.Match(search, pluginapi.CapMinPollInterval) {
+		t.Error("Match(search, CapMinPollInterval) should be false; the search plugin owns it")
 	}
 	// The post-shared-key capability is feed-URL matched and still applies: the
 	// items are ordinary t3_ posts.

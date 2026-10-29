@@ -25,6 +25,15 @@ also shown once: the plugin keys each link post by its poster and external
 destination, and the host collapses the duplicates into a single item that lists
 the other subreddits as sources. This applies on the author and collection pages.
 
+## Poll interval
+
+Reddit's anonymous `.rss` endpoints are tightly rate-limited and every subreddit
+shares the same host, so polling one feed more often spends the budget the others
+need. This plugin therefore declares a **one-hour minimum poll interval** for the
+feeds it matches. Nanoflux uses the larger of that value and its own configured
+minimum, so lowering the global default cannot make a reddit feed poll more often
+than once an hour.
+
 ## Categories (tags)
 
 Every reddit item carries labels, surfaced as tags in the in-feed tag filter, so
