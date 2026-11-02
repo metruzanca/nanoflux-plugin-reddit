@@ -2,6 +2,7 @@ package reddit
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -141,6 +142,48 @@ func TestMatch(t *testing.T) {
 func TestMetaDeclaresPollFloor(t *testing.T) {
 	if got := (&Plugin{}).Meta().MinPollInterval; got != time.Hour {
 		t.Fatalf("MinPollInterval = %v, want 1h", got)
+	}
+}
+
+// A reddit 404 can mean a deleted profile, a banned community, or a suspended
+// account. The Atom body's title says which; only that confirmation is treated
+// as permanent, so an ordinary 404 keeps the normal retry behavior.
+func TestClassifyFetchFailure(t *testing.T) {
+	const feedBody = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>%s</title>
+</feed>`
+	cases := []struct {
+		name   string
+		url    string
+		status int
+		title  string
+		body   string
+		pause  bool
+		reason string
+	}{
+		{"deleted profile", "https://www.reddit.com/user/sam/submitted.rss", 404, "u/sam: deleted", "", true, "reddit profile was deleted"},
+		{"banned community", "https://www.reddit.com/r/cats.rss", 404, "r/cats: banned", "", true, "reddit community was banned"},
+		{"suspended profile", "https://www.reddit.com/user/sam/submitted.rss", 410, "u/sam: suspended", "", true, "reddit profile was suspended"},
+		{"ordinary 404", "https://www.reddit.com/r/cats.rss", 404, "", "<html>not found</html>", false, ""},
+		{"unrelated title", "https://www.reddit.com/user/sam/submitted.rss", 404, "u/sam: something else", "", false, ""},
+		{"not eligible status", "https://www.reddit.com/user/sam/submitted.rss", 500, "u/sam: deleted", "", false, ""},
+		{"non-reddit host", "https://example.com/user/sam/submitted.rss", 404, "u/sam: deleted", "", false, ""},
+	}
+	p := &Plugin{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := tc.body
+			if raw == "" {
+				raw = fmt.Sprintf(feedBody, tc.title)
+			}
+			got := p.ClassifyFetchFailure(pluginapi.FetchFailureRequest{
+				FeedURL: tc.url, Status: tc.status, Body: []byte(raw),
+			})
+			if got.Pause != tc.pause || got.Reason != tc.reason {
+				t.Fatalf("ClassifyFetchFailure = %+v, want pause=%v reason=%q", got, tc.pause, tc.reason)
+			}
+		})
 	}
 }
 
@@ -458,6 +501,9 @@ func TestSearchURLNotOwned(t *testing.T) {
 	}
 	if p.Match(search, pluginapi.CapMinPollInterval) {
 		t.Error("Match(search, CapMinPollInterval) should be false; the search plugin owns it")
+	}
+	if p.Match(search, pluginapi.CapFetchFailure) {
+		t.Error("Match(search, CapFetchFailure) should be false; a search is not a feed")
 	}
 	// The post-shared-key capability is feed-URL matched and still applies: the
 	// items are ordinary t3_ posts.

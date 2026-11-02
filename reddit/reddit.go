@@ -16,6 +16,9 @@
 //     a "[link]" anchor, and that content — an external destination, an oEmbed
 //     player, or a multi-image gallery — cannot be represented on a stored item,
 //     so it is resolved when the item modal opens.
+//   - Permanent failures: a deleted, banned, or suspended profile/subreddit
+//     answers 404 with an Atom title that says so. The plugin classifies that
+//     response so the host pauses the feed instead of retrying it forever.
 package reddit
 
 import (
@@ -67,11 +70,12 @@ type Plugin struct {
 }
 
 var (
-	_ pluginapi.Fetcher     = (*Plugin)(nil)
-	_ pluginapi.Renderer    = (*Plugin)(nil)
-	_ pluginapi.SharedKeyer = (*Plugin)(nil)
-	_ pluginapi.URLPolicy   = (*Plugin)(nil)
-	_ pluginapi.Decoration  = (*Plugin)(nil)
+	_ pluginapi.Fetcher                = (*Plugin)(nil)
+	_ pluginapi.Renderer               = (*Plugin)(nil)
+	_ pluginapi.SharedKeyer            = (*Plugin)(nil)
+	_ pluginapi.URLPolicy              = (*Plugin)(nil)
+	_ pluginapi.Decoration             = (*Plugin)(nil)
+	_ pluginapi.FetchFailureClassifier = (*Plugin)(nil)
 )
 
 func (*Plugin) Meta() pluginapi.Meta {
@@ -103,7 +107,7 @@ func (*Plugin) Match(u *url.URL, cap pluginapi.Capability) bool {
 	switch cap {
 	case pluginapi.CapBypassProxy:
 		return isRedditMediaHost(u.Hostname())
-	case pluginapi.CapRender, pluginapi.CapDocs, pluginapi.CapSharedKey, pluginapi.CapURLPolicy, pluginapi.CapDiscover, pluginapi.CapDecorate, pluginapi.CapMinPollInterval:
+	case pluginapi.CapRender, pluginapi.CapDocs, pluginapi.CapSharedKey, pluginapi.CapURLPolicy, pluginapi.CapDiscover, pluginapi.CapDecorate, pluginapi.CapMinPollInterval, pluginapi.CapFetchFailure:
 		if !isRedditHost(u.Hostname()) {
 			return false
 		}
@@ -113,7 +117,7 @@ func (*Plugin) Match(u *url.URL, cap pluginapi.Capability) bool {
 		// that owns search; the item-link capabilities (render, decorate) and the
 		// per-post shared key still apply, so search results cross-dedupe with
 		// subscribed feeds and render their normal attribution.
-		if isSearchURL(u) && (cap == pluginapi.CapDiscover || cap == pluginapi.CapURLPolicy || cap == pluginapi.CapDocs || cap == pluginapi.CapMinPollInterval) {
+		if isSearchURL(u) && (cap == pluginapi.CapDiscover || cap == pluginapi.CapURLPolicy || cap == pluginapi.CapDocs || cap == pluginapi.CapMinPollInterval || cap == pluginapi.CapFetchFailure) {
 			return false
 		}
 		return true
@@ -152,6 +156,40 @@ func (*Plugin) CanonicalizeFeedURL(raw string) string {
 // subscribed feed for it.
 func (*Plugin) FeedToken(feedURL string) string {
 	return feedToken(feedURL)
+}
+
+// ClassifyFetchFailure recognizes a reddit feed that has permanently gone away.
+// Reddit answers a 404 with a valid Atom document whose title says what
+// happened ("u/name: deleted", "r/name: banned"), so the status alone is not
+// enough: a plain 404 stays a transient error until the body confirms one of
+// these states.
+func (*Plugin) ClassifyFetchFailure(req pluginapi.FetchFailureRequest) pluginapi.FetchFailure {
+	if req.Status != 404 && req.Status != 410 {
+		return pluginapi.FetchFailure{}
+	}
+	u, err := url.Parse(strings.TrimSpace(req.FeedURL))
+	if err != nil || !isRedditHost(u.Hostname()) {
+		return pluginapi.FetchFailure{}
+	}
+	parsed, err := gofeed.NewParser().Parse(bytes.NewReader(req.Body))
+	if err != nil || parsed == nil {
+		return pluginapi.FetchFailure{}
+	}
+	title := strings.ToLower(strings.TrimSpace(parsed.Title))
+	for _, state := range []string{"deleted", "banned", "suspended"} {
+		if !strings.HasSuffix(title, ": "+state) {
+			continue
+		}
+		kind := "feed"
+		switch {
+		case strings.HasPrefix(title, "u/"):
+			kind = "profile"
+		case strings.HasPrefix(title, "r/"):
+			kind = "community"
+		}
+		return pluginapi.FetchFailure{Pause: true, Reason: "reddit " + kind + " was " + state}
+	}
+	return pluginapi.FetchFailure{}
 }
 
 // SharedKeys gives every reddit post a cross-feed SharedKey from its GUID, the

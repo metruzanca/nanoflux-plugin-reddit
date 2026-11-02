@@ -25,6 +25,18 @@ also shown once: the plugin keys each link post by its poster and external
 destination, and the host collapses the duplicates into a single item that lists
 the other subreddits as sources. This applies on the author and collection pages.
 
+## Deleted profiles
+
+If a user profile or subreddit is deleted, banned, or suspended, reddit answers
+the feed request with a 404 whose Atom body still says so in its title, for
+example `u/someuser: deleted`. The plugin reads that title and pauses the feed
+with the reason shown on the feed card.
+
+A paused feed is skipped by the poller, so it stops spending reddit's tight
+anonymous request budget. A manual refresh still makes one request, so you can
+check whether the profile came back. If it did, re-enable the feed from its
+settings; a 404 without the title confirmation stays a normal retryable error.
+
 ## Poll interval
 
 Reddit's anonymous `.rss` endpoints are tightly rate-limited and every subreddit
