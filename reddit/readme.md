@@ -49,13 +49,18 @@ than once an hour.
 ## Categories (tags)
 
 Every reddit item carries labels, surfaced as tags in the in-feed tag filter, so
-you can narrow a list to a subreddit or an author.
+you can narrow a list to a subreddit, an author, or the site a link post points
+at.
 
 | Feed | Category labels |
 | --- | --- |
 | Subreddit (`r/foo`) | the post's author, e.g. `u/someuser` |
 | User (`u/someuser`) | the destination subreddit, e.g. `r/foo` |
+| Link post | the destination's domain, e.g. `imgur.com` |
 
 So on a subreddit feed the tags identify who posted, and on a user feed they
-identify where they posted. The same labels work for any feed whose parser
-provides categories, not just reddit.
+identify where they posted. A link post adds the site it links to, grouped by
+registrable domain: `i.imgur.com` and `www.imgur.com` both become `imgur.com`.
+Reddit's own destinations (an image on `i.redd.it`, a gallery page) get no domain
+tag, and a self post has no external site. The same labels work for any feed
+whose parser provides categories, not just reddit.

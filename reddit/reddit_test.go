@@ -37,6 +37,63 @@ func TestExtractLinkAnchor(t *testing.T) {
 	}
 }
 
+func TestDestinationDomain(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"https://www.imgur.com/gallery/abc", "imgur.com"},
+		{"https://i.imgur.com/abc.jpg", "imgur.com"},
+		{"https://www.youtube.com/watch?v=abc", "youtube.com"},
+		{"https://youtu.be/abc", "youtu.be"},
+		{"https://news.example.co.uk/story", "example.co.uk"},
+		{"HTTPS://WWW.EXAMPLE.COM/x", "example.com"},
+		{"http://localhost:8080/x", "localhost"},
+		{"https://www.reddit.com/gallery/xyz", ""},
+		{"https://i.redd.it/abc.jpg", ""},
+		{"https://preview.redd.it/abc.jpg", ""},
+		{"https://v.redd.it/abc", ""},
+		{"https://reddit.com/r/cats/comments/1a/x/", ""},
+		{"mailto:someone@example.com", ""},
+		{"/relative/path", ""},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := destinationDomain(c.in); got != c.want {
+			t.Errorf("destinationDomain(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// Categorize tags a link post with its destination's registrable domain, and
+// leaves self posts, reddit-hosted destinations and unparseable summaries
+// untagged.
+func TestCategorize(t *testing.T) {
+	p := &Plugin{}
+	link := func(dest string) string {
+		return `<p><a href="` + dest + `">[link]</a></p>`
+	}
+	req := pluginapi.CategorizeRequest{Items: []pluginapi.Item{
+		{Summary: link("https://i.imgur.com/abc.jpg")},
+		{Summary: `<p>self post, no link</p>`},
+		{Summary: link("https://www.reddit.com/gallery/xyz")},
+		{Summary: ""},
+		{Summary: link("https://news.example.co.uk/story")},
+	}}
+	got, err := p.Categorize(context.Background(), req, nil)
+	if err != nil {
+		t.Fatalf("Categorize: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("entries = %+v, want 2", got)
+	}
+	if got[0].Index != 0 || len(got[0].Categories) != 1 || got[0].Categories[0] != "imgur.com" {
+		t.Errorf("first entry = %+v", got[0])
+	}
+	if got[1].Index != 4 || len(got[1].Categories) != 1 || got[1].Categories[0] != "example.co.uk" {
+		t.Errorf("second entry = %+v", got[1])
+	}
+}
+
 func TestPostID(t *testing.T) {
 	cases := []struct {
 		in      string
@@ -118,6 +175,9 @@ func TestMatch(t *testing.T) {
 		}
 		if !p.Match(parsed, pluginapi.CapSharedKey) {
 			t.Errorf("Match(%q, CapSharedKey) = false", u)
+		}
+		if !p.Match(parsed, pluginapi.CapCategorize) {
+			t.Errorf("Match(%q, CapCategorize) = false", u)
 		}
 		if !p.Match(parsed, pluginapi.CapDiscover) {
 			t.Errorf("Match(%q, CapDiscover) = false", u)
@@ -509,6 +569,11 @@ func TestSearchURLNotOwned(t *testing.T) {
 	// items are ordinary t3_ posts.
 	if !p.Match(search, pluginapi.CapSharedKey) {
 		t.Error("Match(search, CapSharedKey) should be true")
+	}
+	// Categorize is per post, like SharedKey, so it applies to search results
+	// too: they are ordinary t3_ link posts.
+	if !p.Match(search, pluginapi.CapCategorize) {
+		t.Error("Match(search, CapCategorize) should be true")
 	}
 
 	// The URL policy must not rewrite or mis-derive a search URL.

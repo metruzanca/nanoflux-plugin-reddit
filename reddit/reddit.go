@@ -10,6 +10,8 @@
 //   - Ingest cross-feed keys: each post gets the cross-feed SharedKey from its
 //     t3_<id> GUID, so a post seen through the subreddit feed and the poster's
 //     user feed is stored once.
+//   - Ingest categories: a link post is tagged with the registrable domain of
+//     its destination ([link] anchor), so users can filter by site.
 //   - View-time decoration: the "r/cats by u/sam" source line (turned into
 //     internal links by the host) and the card kind.
 //   - View-time media: reddit marks a post's real content in its feed HTML with
@@ -34,6 +36,7 @@ import (
 
 	"github.com/mmcdole/gofeed"
 	"golang.org/x/net/html"
+	"golang.org/x/net/publicsuffix"
 
 	"github.com/metruzanca/nanoflux/pluginapi"
 	"nanoflux-plugin-reddit/oembed"
@@ -73,6 +76,7 @@ var (
 	_ pluginapi.Fetcher                = (*Plugin)(nil)
 	_ pluginapi.Renderer               = (*Plugin)(nil)
 	_ pluginapi.SharedKeyer            = (*Plugin)(nil)
+	_ pluginapi.Categorizer            = (*Plugin)(nil)
 	_ pluginapi.URLPolicy              = (*Plugin)(nil)
 	_ pluginapi.Decoration             = (*Plugin)(nil)
 	_ pluginapi.FetchFailureClassifier = (*Plugin)(nil)
@@ -83,7 +87,7 @@ func (*Plugin) Meta() pluginapi.Meta {
 		Name:       Name,
 		APIVersion: pluginapi.APIVersion,
 		UserAgent:  oembed.BrowserUserAgent,
-		Summary:    "reddit: resolves post media, and labels items with their subreddit and author for filtering",
+		Summary:    "reddit: resolves post media, and labels items with their subreddit, author, and destination site for filtering",
 		// Reddit's anonymous .rss endpoints are tightly rate-limited and serve
 		// the same host for every subreddit, so a short poll interval spends the
 		// host's budget on one feed. The host uses the larger of this and its
@@ -107,7 +111,7 @@ func (*Plugin) Match(u *url.URL, cap pluginapi.Capability) bool {
 	switch cap {
 	case pluginapi.CapBypassProxy:
 		return isRedditMediaHost(u.Hostname())
-	case pluginapi.CapRender, pluginapi.CapDocs, pluginapi.CapSharedKey, pluginapi.CapURLPolicy, pluginapi.CapDiscover, pluginapi.CapDecorate, pluginapi.CapMinPollInterval, pluginapi.CapFetchFailure:
+	case pluginapi.CapRender, pluginapi.CapDocs, pluginapi.CapSharedKey, pluginapi.CapCategorize, pluginapi.CapURLPolicy, pluginapi.CapDiscover, pluginapi.CapDecorate, pluginapi.CapMinPollInterval, pluginapi.CapFetchFailure:
 		if !isRedditHost(u.Hostname()) {
 			return false
 		}
@@ -226,6 +230,48 @@ func sharedKey(guid string) string {
 		}
 	}
 	return "reddit:" + guid
+}
+
+// Categorize tags a link post with the registrable domain of its destination,
+// the "[link]" anchor reddit puts in the feed entry. It runs at ingest, so the
+// label reaches the tag filter and tag chips, and it reads only the parsed
+// summary: a feed that strips that content gets no domain label rather than a
+// network lookup on every poll. Reddit's own destinations (an image on
+// i.redd.it, a gallery page) are not tagged.
+func (*Plugin) Categorize(_ context.Context, req pluginapi.CategorizeRequest, _ pluginapi.Host) ([]pluginapi.ItemCategories, error) {
+	var out []pluginapi.ItemCategories
+	for i, it := range req.Items {
+		dest, ok := extractLinkAnchor(it.Summary)
+		if !ok {
+			continue
+		}
+		if domain := destinationDomain(dest); domain != "" {
+			out = append(out, pluginapi.ItemCategories{Index: i, Categories: []string{domain}})
+		}
+	}
+	return out, nil
+}
+
+// destinationDomain returns the registrable domain of a link post's external
+// destination (i.imgur.com -> imgur.com), or "" when the destination is reddit
+// itself or is not an HTTP(S) URL. Grouping by the registrable domain keeps a
+// site's image, media and page hosts under one category.
+func destinationDomain(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return ""
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "" {
+		return ""
+	}
+	if domain, err := publicsuffix.EffectiveTLDPlusOne(host); err == nil {
+		host = domain
+	}
+	if isRedditHost(host) || isRedditMediaHost(host) {
+		return ""
+	}
+	return host
 }
 
 // Decorate builds the "r/cats by u/sam" source line for each reddit item from
